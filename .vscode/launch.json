@@ -4,14 +4,24 @@
   // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
   "version": "0.2.0",
   "configurations": [
+
     {
       "type": "node",
       "request": "launch",
-      "name": "启动程序",
+      "name": "爬小红书",
       "skipFiles": [
         "<node_internals>/**"
       ],
       "program": "${workspaceFolder}/src/main.js"
+    },
+    {
+      "type": "node",
+      "request": "launch",
+      "name": "爬自己",
+      "skipFiles": [
+        "<node_internals>/**"
+      ],
+      "program": "${workspaceFolder}/src/main2.js"
     }
   ]
 }

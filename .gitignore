@@ -1,2 +1,5 @@
 node_modules
 comments.*.csv
+*.csv
+note_list.js
+main2.js

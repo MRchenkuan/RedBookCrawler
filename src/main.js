@@ -3,7 +3,7 @@ import axiosDefault from 'axios';
 import { wrapper } from 'axios-cookiejar-support';
 import headers from './headers.js';
 import note_list from './note_list.js';
-import { saveCSV } from './csv_tool.js';
+import { saveCommentsCSV } from './csv_tool.js';
 import { URL } from 'node:url';
 import cookies from './cookie.js';
 
@@ -134,7 +134,7 @@ async function getComments(noteId, xsec_token, duration) {
       c_list = c_list.concat(comments.map(it=>{it.user_info=it.user_info.nickname;return it}));
       // 大于5000条分个文件
       if(c_list.length>3000){
-        await saveCSV(c_list);
+        await saveCommentsCSV(c_list);
         console.log('Comment data:>5000, save', c_list.length);
         c_list = [];
       }
@@ -146,7 +146,7 @@ async function getComments(noteId, xsec_token, duration) {
       }
     }catch(e){
       console.error(e)
-      await saveCSV(c_list);
+      await saveCommentsCSV(c_list);
       c_list=[];
     }
   }, duration);
@@ -164,7 +164,7 @@ async function readLink(note_list, i, duration){
         await readLink(note_list, i, duration);
       }
     }catch(e){
-      await saveCSV(c_list);
+      await saveCommentsCSV(c_list);
       c_list=[];
       console.error(e)
     }
@@ -199,8 +199,8 @@ async function getUrlParams(url) {
   const finalToken = finalParsed.searchParams.get('xsec_token');
 
   if (!finalId || !finalToken) {
-    await saveCSV(c_list);
-    c_list=[]
+    // await saveCommentsCSV(c_list);
+    // c_list=[]
     console.warn('链接访问不了',finalId, finalToken)
     return {
       id:finalId,
@@ -212,10 +212,14 @@ async function getUrlParams(url) {
 }
 
 
-// 遍历
-await readLink(note_list, note_list.length, 1200);
+// 对note_list进行去重处理
+const uniqueNoteList = [...new Set(note_list)];
+console.log(`原始链接数量: ${note_list.length}, 去重后链接数量: ${uniqueNoteList.length}`);
+
+// 遍历 (使用去重后的链接列表)
+await readLink(uniqueNoteList, uniqueNoteList.length, 2500);
 if(c_list.length){
-  saveCSV(c_list);
+  saveCommentsCSV(c_list);
   c_list=[]
 }
 
