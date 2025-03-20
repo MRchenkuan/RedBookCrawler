@@ -1,226 +1,252 @@
-import { CookieJar } from 'tough-cookie';
-import axiosDefault from 'axios';
-import { wrapper } from 'axios-cookiejar-support';
-import headers from './headers.js';
 import note_list from './note_list.js';
 import { saveCommentsCSV } from './csv_tool.js';
-import { URL } from 'node:url';
 import cookies from './cookie.js';
+import { 
+  initClientPool, 
+  fetchCommentPage, 
+  fetchSubCommentPage,
+  getUrlParams 
+} from './utils.js';
 
+// 爬取间隔
+const duration_note = 1000;      // 主贴
+const duration_comment = 2500;   // 评论
+const duration_subcomment = 2500;// 子评论
 
-/**
- * 初始化客户端
- */
-function initClientPool(cookies){
-  let currentIndex = 0;
-  const jar = new CookieJar();
-  const pool = cookies.map(cookie=>{
-    /* 初始化cookie */
-    jar.setCookie(
-      cookie, 
-      'https://edith.xiaohongshu.com',
-      { ignoreError: true }
-    );
+// 保存数据
+let page = 100, t, c_list = [];
 
-    // 创建axios实例
-    const axios = wrapper(axiosDefault.create({
-      jar,  // 仅保留必要的 jar 配置
-    }));
+// let note_list = [
+//   "https://www.xiaohongshu.com/explore/67ab33ea000000002503f275?xsec_token=MBoD6W-urgGzvAgfhI-85PeN55uQMlb3ZYhEMKmBuU0_o=&xsec_source=pc_pgyexport"
+// ];
 
-    const instance = axios.create({
-      baseURL: 'https://edith.xiaohongshu.com',
-      jar, // Cookie持久化
-      headers:{
-        ...headers,
-        'Cookie': cookie
-      }
-    });
-    return {
-      cookie,
-      instance
-    };
-  })
-
-  return{
-    pool,
-    getClinet(repeatClinet){
-      if(repeatClinet)currentIndex = currentIndex-1;
-      currentIndex = (currentIndex + 1) % pool.length
-      return pool[currentIndex]
-    },
-  }
-}
-
+// 初始化客户端池
 const pool = initClientPool(cookies);
 
+/**
+ * 获取笔记的评论
+ * @param {string} noteId - 笔记ID
+ * @param {string} xsec_token - 安全令牌
+ * @param {number} totalComments - 已获取的评论总数
+ * @returns {Promise<number>} 获取的评论数量
+ */
+async function getComments(client, noteId, xsec_token, c='', totalComments = 0) {
+  let pageCommentCount = 0;
+  
+  return new Promise((resolve, reject) => {
+    setTimeout(async () => {
+      try {
+        const { cursor, comments, has_more, xsec_token:xsec_token_new,user_id } = await fetchCommentPage(client, noteId, xsec_token, c) || {};
+        
+        if (!comments || comments.length === 0) {
+          console.log('未获取到评论数据或评论为空');
+          return resolve(totalComments);
+        }
+        
+        let sub_comments = [];
+        let mainCommentCount = comments.length;
+        let subCommentTotalCount = 0;
 
+        // 处理评论和子评论
+        for (const comment of comments) {
+          comment.user_info = comment.user_info.nickname;
+          sub_comments = sub_comments.concat(comment.sub_comments);
+          
+          if(comment.sub_comment_has_more) {
+            // 获取子评论并记录数量
+            const subCommentCount = await getMoreSubComments(client, noteId, xsec_token, comment.id, comment.sub_comment_cursor);
+            subCommentTotalCount += subCommentCount;
+          }
+        }
+        
+        // 处理子评论
+        if (sub_comments.length) {
+          sub_comments.forEach(it => {
+            it.user_info = it.user_info.nickname;
+            it.target_comment_id = it.target_comment.id;
+          });
+          comments.push(...sub_comments);
+          subCommentTotalCount += sub_comments.length;
+        }
+  
+        c_list.push(...comments);
+        pageCommentCount = comments.length;
+        
+        // 当前累计评论总数
+        const currentTotal = totalComments + pageCommentCount;
+        
+        console.log(`- 当前评论分页获取主评论 ${mainCommentCount} 条，子评论 ${subCommentTotalCount} 条，总计 ${pageCommentCount} 条`);
+        console.log(`- 当前笔记累计获取评论总数: ${currentTotal} 条`);
+        
+        // 大于3000条分个文件
+        if (c_list.length > 3000) {
+          await saveCommentsCSV(c_list);
+          console.log('Comment data:>3000, save', c_list.length);
+          c_list = [];
+        }
+        
+        if (!has_more) {
+          return resolve(currentTotal);
+        }
 
+        
+        if (page-- > 0) {
+          // 递归调用并累加评论数量
+          const finalTotal = await getComments(client, noteId, xsec_token, cursor, currentTotal);
+          resolve(finalTotal);
+        } else {
+          console.log(`已达到最大页数限制，笔记 ${noteId} 共获取 ${currentTotal} 条评论`);
+          resolve(currentTotal);
+        }
+      } catch (e) {
+        console.error('获取评论出错:', e);
+        if (c_list.length > 0) {
+          try {
+            await saveCommentsCSV(c_list);
+            console.log('错误情况下保存数据', c_list.length);
+            c_list = [];
+          } catch (saveError) {
+            console.error('保存评论时出错:', saveError);
+          }
+        }
+        console.log(`评论获取出错，已获取 ${totalComments} 条评论`);
+        reject(e);
+      }
+    }, duration_comment);
+  });
+}
 
-// API请求函数
-export async function fetchCommentPage(noteId, xsec_token, cursor) {
-  const instance = pool.getClinet().instance;
+/**
+ * 读取并处理链接列表
+ * @param {Array<string>} note_list - 笔记链接列表
+ * @param {number} i - 当前处理的索引
+ * @returns {Promise<void>}
+ */
+async function readLink(note_list, i) {
+  const client = pool.getClinet();
+  return new Promise((resolve, reject) => {
+    setTimeout(async () => {
+      try {
+        if (i <= 0) {
+          if (c_list.length > 0) {
+            await saveCommentsCSV(c_list);
+            console.log('所有链接处理完毕，保存剩余评论', c_list.length);
+            c_list = [];
+          }
+          return resolve();
+        }
+        
+        const currentLink = note_list[note_list.length - i];        
+        const {id:noteId, xsec_token} = await getUrlParams(client, currentLink);
+        let linkCommentCount = 0;
+        
+        if (noteId && xsec_token) {
+          linkCommentCount = await getComments(client, noteId, xsec_token);
+          console.log(`链接 ${currentLink} 爬取完成，获取评论数:`, linkCommentCount);
+        }
+        
+        console.log(`已抓取评论${c_list.length}; ${note_list.length - i + 1}/${note_list.length}`);
+        
+        // 重置页面和游标
+        page = 100;        
+        // 超过阈值保存
+        if (c_list.length > 5000) {
+          await saveCommentsCSV(c_list);
+          console.log('评论数量超过5000，保存数据', c_list.length);
+          c_list = [];
+        }
+        
+        await readLink(note_list, i - 1);
+        resolve();
+      } catch (e) {
+        if (c_list.length > 0) {
+          try {
+            await saveCommentsCSV(c_list);
+            console.log('错误情况下保存数据', c_list.length);
+            c_list = [];
+          } catch (saveError) {
+            console.error('保存评论时出错:', saveError);
+          }
+        }
+        console.error('处理链接出错:', e);
+        reject(e);
+      }
+    }, duration_note);
+  });
+}
+
+/**
+ * 获取更多子评论
+ * @param {string} noteId - 笔记ID
+ * @param {string} xsec_token - 安全令牌
+ * @param {string} id - 父评论ID
+ * @param {string} sub_comment_cursor - 子评论分页游标
+ * @returns {Promise<number>} 获取的子评论数量
+ */
+async function getMoreSubComments(client, noteId, xsec_token, id, sub_comment_cursor, totalSubComments = 0) {
   try {
-    const params = {
-      note_id: noteId,
-      cursor,
-      top_comment_id: '',
-      image_formats: 'jpg,webp,avif',
-      xsec_token: xsec_token
-    };
-
-    const response = await instance.get('/api/sns/web/v2/comment/page', {
-      params,
-      timeout: 5000,
-      validateStatus: (status) => status < 400 || status === 403
+    const {
+      comments:sub_comments, 
+      cursor:cursor_sub, 
+      has_more:has_more_sub
+    } = await fetchSubCommentPage(client, noteId, xsec_token, id, sub_comment_cursor) || {};
+    
+    if (!sub_comments || sub_comments.length === 0) {
+      console.log(`- 评论ID ${id} 的子评论获取完成，共获取 ${totalSubComments} 条子评论`);
+      return totalSubComments;
+    }
+    
+    sub_comments.forEach(it => {
+      it.user_info = it.user_info.nickname;
+      it.target_comment_id = id;
     });
-
-    if(response.data.success) {
-      return response.data.data 
-    }else {
-      console.error(response.data);
-      throw new Error(response);
+    
+    c_list.push(...sub_comments);
+    
+    // 累加当前批次的子评论数量
+    const currentTotal = totalSubComments + sub_comments.length;
+    
+    if (has_more_sub) {
+      return new Promise(resolve => {
+        setTimeout(async () => {
+          // 递归调用并累加子评论数量
+          const finalTotal = await getMoreSubComments(client, noteId, xsec_token, id, cursor_sub, currentTotal);
+          resolve(finalTotal);
+        }, duration_subcomment);
+      });
+    } else {
+      // 没有更多子评论时，打印总数并返回
+      console.log(`- 评论ID ${id} 的子评论获取完成，共获取 ${currentTotal} 条子评论`);
+      return currentTotal;
     }
   } catch (error) {
-    console.error(`Request failed: ${error.message}`);
+    console.error('- 获取子评论出错:', error);
+    console.log(`- 评论ID ${id} 的子评论获取出错，已获取 ${totalSubComments} 条子评论`);
+    return totalSubComments;
   }
 }
 
-// 从路径中提取 24 位十六进制格式的 ID
-function extractIdFromPath(path) {
-  const parts = path.split('/');
-  for (const part of parts) {
-    if (/^[a-f0-9]{24}$/.test(part)) {
-      return part;
-    }
-  }
-  return null;
-}
-
-// 手动跟踪重定向获取最终 URL
-async function getRedirectedUrl(url) {
-  const instance = pool.getClinet(true).instance;
-
-  let currentUrl = url;
-  let redirectCount = 0;
-  const maxRedirects = 10;
-
-  while (redirectCount < maxRedirects) {
-    const response = await instance.get(currentUrl, {
-      maxRedirects: 0,
-      validateStatus: (status) => status >= 200 && status < 400,
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'
-      }
-    });
-
-    if (response.status >= 300 && response.status < 400) {
-      const location = response.headers.location;
-      if (!location) throw new Error('Redirect location missing');
-      currentUrl = new URL(location, currentUrl).href; // 处理相对路径
-      redirectCount++;
-    } else {
-      return currentUrl;
-    }
-  }
-  throw new Error(`Exceeded max redirects (${maxRedirects})`);
-}
-
-let page = 100, c, t, c_list = []
-
-async function getComments(noteId, xsec_token, duration) {
-  setTimeout(async () => {
-    try{
-      const {cursor, xsec_token:xsec_token_new, comments, has_more, time} = await fetchCommentPage(noteId, xsec_token,c) || {};
-      c_list = c_list.concat(comments.map(it=>{it.user_info=it.user_info.nickname;return it}));
-      // 大于5000条分个文件
-      if(c_list.length>3000){
-        await saveCommentsCSV(c_list);
-        console.log('Comment data:>5000, save', c_list.length);
-        c_list = [];
-      }
-      if(!has_more) return;
-      if(page-->0){
-        c = cursor;
-        t = xsec_token_new;
-        const r = await getComments(noteId, xsec_token, duration)
-      }
-    }catch(e){
-      console.error(e)
-      await saveCommentsCSV(c_list);
-      c_list=[];
-    }
-  }, duration);
-}
-
-async function readLink(note_list, i, duration){
-  setTimeout(async () => {
-    try{
-      const {id:noteId, xsec_token} = await getUrlParams(note_list[note_list.length - i])
-      if(noteId && xsec_token){
-        await getComments(noteId, xsec_token, duration)
-      }
-      if(i-->0) {
-        console.log(`已抓取评论${c_list.length}; ${note_list.length - i}/${note_list.length}`)
-        await readLink(note_list, i, duration);
-      }
-    }catch(e){
-      await saveCommentsCSV(c_list);
-      c_list=[];
-      console.error(e)
-    }
-  }, 1000);
-}
-
-
-
-// 主函数：获取 ID 和 xsec_token
-async function getUrlParams(url) {
-  if(!url){
-    console.warn('空链接')
-    return {
-      id:null,
-      xsec_token:null
-    }
-  }
-  const parsedUrl = new URL(url);
-  const originalId = extractIdFromPath(parsedUrl.pathname);
-  const originalToken = parsedUrl.searchParams.get('xsec_token');
-
-  // 如果原始链接已包含参数，直接返回
-  if (originalId && originalToken) {
-    console.log('连接合法直接返回',originalId,originalToken)
-    return { id: originalId, xsec_token: originalToken };
-  }
-
-  // 需要跟踪重定向获取最终 URL
-  const finalUrl = await getRedirectedUrl(url);
-  const finalParsed = new URL(finalUrl);
-  const finalId = extractIdFromPath(finalParsed.pathname);
-  const finalToken = finalParsed.searchParams.get('xsec_token');
-
-  if (!finalId || !finalToken) {
-    // await saveCommentsCSV(c_list);
-    // c_list=[]
-    console.warn('链接访问不了',finalId, finalToken)
-    return {
-      id:finalId,
-      xsec_token:finalToken
-    }
-  }
-  console.log('跟踪重定向',finalId,finalToken)
-  return { id: finalId, xsec_token: finalToken };
-}
-
-
+// 修改getComments函数中调用getMoreSubComments的部分
 // 对note_list进行去重处理
 const uniqueNoteList = [...new Set(note_list)];
 console.log(`原始链接数量: ${note_list.length}, 去重后链接数量: ${uniqueNoteList.length}`);
 
 // 遍历 (使用去重后的链接列表)
-await readLink(uniqueNoteList, uniqueNoteList.length, 2500);
-if(c_list.length){
-  saveCommentsCSV(c_list);
-  c_list=[]
+try {
+  await readLink(uniqueNoteList, uniqueNoteList.length);
+  // 确保最后一次保存
+  if (c_list.length > 0) {
+    await saveCommentsCSV(c_list);
+    console.log('爬取完成，保存最后的数据', c_list.length);
+    c_list = [];
+  }
+} catch (error) {
+  console.error('爬取过程中出错:', error);
+  // 确保错误情况下也保存数据
+  if (c_list.length > 0) {
+    await saveCommentsCSV(c_list);
+    c_list = [];
+  }
 }
 
 

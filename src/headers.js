@@ -1,4 +1,3 @@
-import cookieStr from './cookie.js'
 
 export default {
     'authority': 'edith.xiaohongshu.com',
@@ -16,3 +15,20 @@ export default {
     'upgrade-insecure-requests': '1',
     'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36',
   }
+
+export const options_headers = {
+  'pragma': 'no-cache',
+  'cache-control': 'no-cache',
+  'accept': '*/*',
+  'access-control-request-method': 'GET', // CORS 预检专用头
+  'access-control-request-headers': 'x-b3-traceid,x-mns,x-s,x-s-common,x-t,x-xray-traceid', // CORS 预检专用头
+  'origin': 'https://www.xiaohongshu.com',
+  'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+  'sec-fetch-mode': 'cors',
+  'sec-fetch-site': 'same-site',
+  'sec-fetch-dest': 'empty',
+  'referer': 'https://www.xiaohongshu.com/',
+  'accept-encoding': 'gzip, deflate, br, zstd',
+  'accept-language': 'zh-CN,zh;q=0.9,en;q=0.8,zh-TW;q=0.7',
+  'priority': 'u=1, i'
+}

@@ -26,17 +26,18 @@ async function getUniqueFilePath(basePath) {
 export async function saveCommentsCSV(data, options = {}) {
   if(!data.length)return;
   const h = [
+    { id: 'note_id', title: '帖子ID' },
+    { id: 'id', title: '评论ID' },
+    { id: 'target_comment_id', title: '父评论ID' },
     { id: 'content', title: '评论内容' },
     { id: 'ip_location', title: '评论IP' },
     { id: 'like_count', title: '喜欢数' },
     { id: 'create_time', title: '时间戳' },
     { id: 'user_info', title: '用户信息' },
     { id: 'at_users', title: '艾特的人' },
-    { id: 'id', title: '评论ID' },
     { id: 'liked', title: '已喜欢' },
     { id: 'show_tags', title: '标签' },
     { id: 'status', title: '状态' },
-    { id: 'note_id', title: '帖子ID' },
   ];
 
   try {
