@@ -1,0 +1,6 @@
+node_modules
+*.csv
+note_list.js
+main2.js
+*.tar
+*.zip
