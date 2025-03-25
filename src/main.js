@@ -7,7 +7,8 @@ import {
   fetchSubCommentPage,
   getUrlParams, 
   initClientPoolWithNoneCookies,
-  fetchUrlContent
+  fetchUrlContent,
+  extractIdFromPath
 } from './utils.js';
 import * as cheerio from 'cheerio';
 
@@ -288,8 +289,10 @@ export async function getNoteDetail(link, retryCount = 0) {
     }
 
     return {
-      url: result.url,
-      cookieString,
+      url,
+      result_url:result.url,
+      cookies:cookieString,
+      retry: retryCount,
       title,
       desc: $('meta[property="og:description"]').attr('content') || 
             $('.note-scroller .note-content #detail-desc').text().trim() || '',
