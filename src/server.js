@@ -12,4 +12,5 @@ app.use('/api/note', noteRouter);
 
 app.listen(port, () => {
   console.log(`服务器运行在 http://localhost:${port}`);
+  console.log(`服务地址 http://localhost:${port}/api/note/detail?url=`);
 });

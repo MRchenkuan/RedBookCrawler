@@ -6,8 +6,8 @@ import {
   fetchCommentPage, 
   fetchSubCommentPage,
   getUrlParams, 
-  getRedirectedUrl,
-  initClientPoolWithNoneCookies
+  initClientPoolWithNoneCookies,
+  fetchUrlContent
 } from './utils.js';
 import * as cheerio from 'cheerio';
 
@@ -255,35 +255,63 @@ export async function walkComments() {
 }
 
 
-export async function getNoteDetail(link) {
-  try {
-    const client = poolWithNoneCookies.getClinet();
+export async function getNoteDetail(link, retryCount = 0) {
+  async function fetchAndParse(client, url) {
+    const result = await fetchUrlContent(client, url);
     
-    // 获取重定向后的最终URL
-    const finalUrl = await getRedirectedUrl(client, link);
-    const response = await client.instance.get(finalUrl);
-    // 从请求中获取 cookie
+    if (!result.response) {
+      throw new Error('请求失败，无响应数据');
+    }
+
     const requestCookies = client.jar.getCookiesSync('https://www.xiaohongshu.com');
     const cookieString = requestCookies.map(cookie => `${cookie.key}=${cookie.value}`).join('; ');
-    const $ = cheerio.load(response.data);
+    const $ = cheerio.load(result.response.data);
     
-    // // 使用 cheerio 选择器获取内容
-    // const title = $('.note-scroller .note-content #detail-title').text().trim();
-    // const desc = $('.note-scroller .note-content #detail-desc').text().trim();
-    // const date = $('.note-scroller .note-content .bottom-container .date').text().trim();
+    // 检查是否需要登录
+    if (result.url.includes('login?redirectPath')) {
+      throw new Error('需要登录认证');
+    }
 
-    // 使用更可靠的选择器
-    const title = $('meta[property="og:title"]').attr('content') || $('.note-scroller .note-content #detail-title').text().trim() || '';
-    const desc = $('meta[property="og:description"]').attr('content') || $('.note-scroller .note-content #detail-desc').text().trim() || '';
-    const date = $('.note-scroller .note-content .bottom-container .date').text().trim() || $('.date').text().trim() || '';
+    const title = $('meta[property="og:title"]').attr('content') || 
+                 $('.note-scroller .note-content #detail-title').text().trim() || '';
+    
+    // 如果标题为空，可能需要使用新的URL重试
+    if (!title && retryCount < 2) {
+      const finalParsed = new URL(result.url);
+      const finalId = extractIdFromPath(finalParsed.pathname);
+      const finalToken = finalParsed.searchParams.get('xsec_token');
+      
+      if (finalId && finalToken) {
+        const newUrl = `https://www.xiaohongshu.com/explore/${finalId}?xsec_token=${finalToken}`;
+        return getNoteDetail(newUrl, retryCount + 1);
+      }
+    }
 
     return {
+      url: result.url,
+      cookieString,
       title,
-      desc,
-      date,
-      cookies:cookieString,
-      url: link
+      desc: $('meta[property="og:description"]').attr('content') || 
+            $('.note-scroller .note-content #detail-desc').text().trim() || '',
+      date: $('.note-scroller .note-content .bottom-container .date').text().trim() || 
+            $('.date').text().trim() || '',
+      method: client.cookie ? 'auth' : 'normal'
     };
+  }
+
+  try {
+    // 先尝试无cookie请求
+    let client = poolWithNoneCookies.getClinet();
+    try {
+      return await fetchAndParse(client, link);
+    } catch (error) {
+      if (error.message === '需要登录认证') {
+        // 使用带cookie的客户端重试
+        client = pool.getClinet();
+        return await fetchAndParse(client, link);
+      }
+      throw error; // 其他错误直接抛出
+    }
   } catch (error) {
     console.error('获取笔记详情失败:', error.message);
     return {
@@ -291,7 +319,7 @@ export async function getNoteDetail(link) {
       desc: error.message,
       date: '',
       url: link,
-      cookies:client.cookie,
+      cookieString: '',
       error: error.message
     };
   }

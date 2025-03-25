@@ -266,7 +266,6 @@ export async function getRedirectedUrl(client, url) {
       return currentUrl;
     }
   }
-  throw new Error(`Exceeded max redirects (${maxRedirects})`);
 }
 
 /**
@@ -352,4 +351,71 @@ export function parseXHSURL(urlString) {
     console.error('URL解析错误:', e);
     return null;
   }
+}
+
+export async function fetchUrlContent(client, url, maxRedirects = 3) {
+  let currentUrl = url;
+  let redirectCount = 0;
+
+  while (redirectCount < maxRedirects) {
+    try {
+      const response = await client.instance.get(currentUrl, {
+        maxRedirects: 0,
+        validateStatus: status => status >= 200 && status < 400
+      });
+
+      // 如果是200，直接返回内容
+      if (response.status === 200) {
+        return {
+          url: currentUrl,
+          response,
+          redirectCount
+        };
+      }
+
+      // 获取重定向地址
+      const location = response.headers.location;
+      if (!location) {
+        return {
+          url: currentUrl,
+          response: null,
+          redirectCount,
+          error: '无重定向地址'
+        };
+      }
+
+      // 更新URL并继续
+      currentUrl = location.startsWith('/') ? 
+        `https://www.xiaohongshu.com${location}` : 
+        location;
+      
+      redirectCount++;
+
+    } catch (error) {
+      // 处理重定向异常
+      if (error.response?.headers?.location) {
+        currentUrl = error.response.headers.location.startsWith('/') ?
+          `https://www.xiaohongshu.com${error.response.headers.location}` :
+          error.response.headers.location;
+        redirectCount++;
+        continue;
+      }
+
+      // 其他错误直接返回
+      console.error('请求失败:', error.message);
+      return {
+        url: currentUrl,
+        response: null,
+        redirectCount,
+        error: error.message
+      };
+    }
+  }
+
+  return {
+    url: currentUrl,
+    response: null,
+    redirectCount,
+    error: '超过最大重定向次数'
+  };
 }
