@@ -59,6 +59,37 @@ export function initClientPool(cookies){
   };
 }
 
+export function initClientPoolWithNoneCookies(num){
+  let currentIndex = 0;
+  // 使用 Array.from 或 fill 来创建有实际元素的数组
+  const pool = Array.from({ length: num }, () => {
+    const jar = new CookieJar();
+    const axios = wrapper(axiosDefault.create({
+      jar,
+      headers
+    }));
+    const instance = axios.create({
+      baseURL: 'https://edith.xiaohongshu.com',
+      withCredentials: true
+    });
+
+    return {
+      cookie: null,
+      instance,
+      jar
+    };
+  });
+
+  return {
+    pool,
+    getClinet(repeatClinet){
+      if(repeatClinet) currentIndex = currentIndex-1;
+      currentIndex = (currentIndex + 1) % pool.length;
+      return pool[currentIndex];
+    },
+  };
+}
+
 /**
  * 获取主评论
  * @param {Object} pool - 客户端池

@@ -6,7 +6,8 @@ import {
   fetchCommentPage, 
   fetchSubCommentPage,
   getUrlParams, 
-  getRedirectedUrl
+  getRedirectedUrl,
+  initClientPoolWithNoneCookies
 } from './utils.js';
 import * as cheerio from 'cheerio';
 
@@ -24,6 +25,7 @@ let page = 100, t, c_list = [];
 
 // 初始化客户端池
 const pool = initClientPool(cookies);
+const poolWithNoneCookies = initClientPoolWithNoneCookies(7);
 
 /**
  * 获取笔记的评论
@@ -255,33 +257,41 @@ export async function walkComments() {
 
 export async function getNoteDetail(link) {
   try {
-    const client = pool.getClinet();
+    const client = poolWithNoneCookies.getClinet();
     
     // 获取重定向后的最终URL
     const finalUrl = await getRedirectedUrl(client, link);
-    debugger
     const response = await client.instance.get(finalUrl);
-
+    // 从请求中获取 cookie
+    const requestCookies = client.jar.getCookiesSync('https://www.xiaohongshu.com');
+    const cookieString = requestCookies.map(cookie => `${cookie.key}=${cookie.value}`).join('; ');
     const $ = cheerio.load(response.data);
     
-    // 使用 cheerio 选择器获取内容
-    const title = $('.note-scroller .note-content #detail-title').text().trim();
-    const desc = $('.note-scroller .note-content #detail-desc').text().trim();
-    const date = $('.note-scroller .note-content .bottom-container .date').text().trim();
+    // // 使用 cheerio 选择器获取内容
+    // const title = $('.note-scroller .note-content #detail-title').text().trim();
+    // const desc = $('.note-scroller .note-content #detail-desc').text().trim();
+    // const date = $('.note-scroller .note-content .bottom-container .date').text().trim();
+
+    // 使用更可靠的选择器
+    const title = $('meta[property="og:title"]').attr('content') || $('.note-scroller .note-content #detail-title').text().trim() || '';
+    const desc = $('meta[property="og:description"]').attr('content') || $('.note-scroller .note-content #detail-desc').text().trim() || '';
+    const date = $('.note-scroller .note-content .bottom-container .date').text().trim() || $('.date').text().trim() || '';
 
     return {
       title,
       desc,
       date,
+      cookies:cookieString,
       url: link
     };
   } catch (error) {
     console.error('获取笔记详情失败:', error.message);
     return {
-      title: '',
-      desc: '',
+      title: '获取笔记详情失败',
+      desc: error.message,
       date: '',
       url: link,
+      cookies:client.cookie,
       error: error.message
     };
   }
