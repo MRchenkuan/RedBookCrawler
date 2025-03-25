@@ -9,6 +9,21 @@
 - 支持子评论爬取
 - Docker 容器化部署
 - PM2 进程守护
+- Cookie 池管理
+- 自动重试机制
+
+## 使用说明
+
+### 1. 配置文件
+
+在 `data` 目录下创建以下文件：
+
+- `cookie.js`: Cookie 配置文件
+```javascript
+export default [
+  'your-cookie-string-here'
+]
+```
 
 ## 快速开始
 
